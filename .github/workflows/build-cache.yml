@@ -1,0 +1,35 @@
+name: Build Debian 13 Raphael cache image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build inside Debian 13 ARM64
+        run: |
+          docker run --rm --platform linux/arm64 \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --workdir /workspace \
+            debian:trixie \
+            bash scripts/build-cache.sh
+      - name: Upload boot image and components
+        uses: actions/upload-artifact@v4
+        with:
+          name: raphael-cache-d771f251-debian13
+          path: |
+            out/raphael-cache-d771f251-debian13.img
+            out/raphael-cache-d771f251-debian13.img.sha256
+            out/linux.efi
+            out/initramfs
+            out/sm8150-xiaomi-raphael.dtb
+          if-no-files-found: error
+          retention-days: 14

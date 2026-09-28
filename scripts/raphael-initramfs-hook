@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+PREREQS=""
+case "$1" in
+    prereqs) echo "$PREREQS"; exit 0 ;;
+esac
+. /usr/share/initramfs-tools/hook-functions
+
+for pattern in \
+    '/lib/firmware/qcom/a6*' \
+    '/lib/firmware/qcom/sm8150/Xiaomi/raphael/a6*' \
+    '/lib/firmware/qcom/sm8150/Xiaomi/raphael/ad*' \
+    '/lib/firmware/qcom/sm8150/Xiaomi/raphael/cd*' \
+    '/lib/firmware/qcom/sm8150/Xiaomi/raphael/ipa*'; do
+    for fw in $pattern; do
+        [ -e "$fw" ] && copy_file firmware "$fw"
+    done
+done
+exit 0
