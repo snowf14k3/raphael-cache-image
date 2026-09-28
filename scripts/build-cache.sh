@@ -99,5 +99,12 @@ cmp "${OUT}/initramfs" "${WORK}/verify/initramfs"
 cmp "${OUT}/sm8150-xiaomi-raphael.dtb" \
     "${WORK}/verify/sm8150-xiaomi-raphael.dtb"
 
+# The public FAT template contains nonzero data in unused clusters. Fill the
+# free space with zeros, then remove the temporary file to keep the FAT layout.
+truncate -s 200M "${WORK}/zero.fill"
+mcopy -i "$IMAGE" "${WORK}/zero.fill" ::/ZERO.FILL
+mdel -i "$IMAGE" ::/ZERO.FILL
+fsck.vfat -n "$IMAGE"
+
 (cd "$OUT" && sha256sum "$(basename "$IMAGE")" > "$(basename "$IMAGE").sha256")
 ls -lh "$OUT"
