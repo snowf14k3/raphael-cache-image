@@ -1,14 +1,11 @@
-# Raphael Debian 13 cache 镜像
+# Raphael Debian 13 cache 恢复组件
 
-此项目仅生成 Redmi K20 Pro（Raphael）的 `cache` 启动镜像，不编译内核，也不刷写设备。GitHub Actions 使用原生 ARM64 runner 运行 Debian 13 容器，在其中安装已发布的 `d771f251` 内核包和 Raphael 固件，调用 `update-initramfs` 生成完整的 `initramfs`，再把 EFI 内核、initramfs 与 DTB 写入 256 MiB FAT32 cache 模板。
+GitHub Actions 使用原生 ARM64 runner 的 Debian 13 容器，安装 `gc0d0d7d7dbb8` 内核包和 Raphael 固件，并用 `update-initramfs` 生成匹配的 initramfs。构建不重新编译内核。
 
-在 Actions 的 **Build Debian 13 Raphael cache image** 中运行工作流，下载 `raphael-cache-d771f251-debian13` artifact。校验镜像 SHA256 后，在能识别手机的 fastboot 环境使用：
+initramfs 中额外包含该内核的完整模块目录。在第一次启动、挂载 `userdata` 根分区后，它把模块放进 `/usr/lib/modules/7.1.0-sm8150-gc0d0d7d7dbb8`。此步骤会写入手机的根文件系统，避免旧 `ge358973bb9f2` 模块与新内核版本不符。
 
-```sh
-fastboot flash cache raphael-cache-d771f251-debian13.img
-fastboot reboot
-```
+Actions artifact 提供 `linux.efi`、`initramfs`、Raphael DTB、内核 deb 和 `SHA256SUMS`。最终 cache 镜像须以设备原本**能启动**的 `xiaomi-k20pro-boot.img` 为底，只替换 EFI 内核和 initramfs；保留原 bootloader、DTB 与启动项。不要直接把 Actions artifact 当作 fastboot 镜像刷入。
 
-此镜像针对 `userdata` 上的未加密 ext4 Debian 13 根文件系统。文件完整性由工作流验证；实机启动和设备驱动仍需刷入后确认。
+针对未加密 ext4 `userdata` 的 Debian 13 系统。文件完整性可在打包后校验；实际设备启动仍需验证。
 
-参考：[GengWei1997 的 initramfs 生成脚本](https://github.com/GengWei1997/linux-xiaomi-raphael-uboot/blob/master/scripts/09-install-kernel.sh) 与 [cache 镜像刷写说明](https://github.com/GengWei1997/linux-xiaomi-raphael-uboot)。
+参考：[上游 initramfs 生成步骤](https://github.com/GengWei1997/linux-xiaomi-raphael-uboot/blob/master/scripts/09-install-kernel.sh)。

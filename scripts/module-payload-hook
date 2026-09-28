@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+PREREQS=""
+case "$1" in
+    prereqs) echo "$PREREQS"; exit 0 ;;
+esac
+: "${DESTDIR:?initramfs DESTDIR is required}"
+archive=/workspace/.work/raphael-modules.tar.gz
+[ -s "$archive" ]
+cp "$archive" "$DESTDIR/raphael-modules.tar.gz"

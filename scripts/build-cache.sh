@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-KERNEL='7.1.0-sm8150-gd771f25178ba'
-TAG="test-raphael-7.1-${KERNEL}"
-BUNDLE="raphael-raphael-7.1-${KERNEL}"
-BUNDLE_SHA256='61ce29b064fb8a8e11c8eba404d7d216f7c681d693865acabd69e135573b667b'
-BASE='https://github.com/snowf14k3/raphael-kernel-build/releases/download'
-BOOT_URL='https://github.com/GengWei1997/kernel-deb/releases/download/v1.0.0/xiaomi-k20pro-boot.img'
+KERNEL='7.1.0-sm8150-gc0d0d7d7dbb8'
+DEB="linux-image-${KERNEL}_7.1.0-gc0d0d7d7dbb8-1_arm64.deb"
+DEB_SHA256='e5b4a398e2093b42d2ede8acff9f7923154f8b6d54386a1e7a91f79e35a5a0ca'
+DTB_SHA256='3a38482077fd47ad2fd680ebb2c594e1c57ef5073b1173405d9d1f075290e6e7'
+INPUT_BASE='https://github.com/snowf14k3/raphael-cache-image/releases/download/bootfix-input-gc0d0d7d7dbb8'
 FIRMWARE_URL='https://github.com/GengWei1997/kernel-deb/releases/download/kernel-v7.1/firmware-xiaomi-raphael.deb'
 WORK='/workspace/.work'
 OUT='/workspace/out'
-IMAGE="${OUT}/raphael-cache-d771f251-debian13.img"
 
 if [[ "$(uname -m)" != aarch64 ]]; then
     echo 'This build must run in a native Debian 13 ARM64 container.' >&2
@@ -25,17 +23,17 @@ fi
 mkdir -p "$WORK" "$OUT"
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates curl initramfs-tools busybox-static kmod udev \
-    mtools dosfstools file
+    ca-certificates curl initramfs-tools busybox-static kmod udev file
+busybox --list > "${WORK}/busybox-applets.txt"
+grep -qx tar "${WORK}/busybox-applets.txt"
+grep -qx sha256sum "${WORK}/busybox-applets.txt"
 
-curl -fL --retry 3 --output "${WORK}/${BUNDLE}.tar.gz" \
-    "${BASE}/${TAG}/${BUNDLE}.tar.gz"
-echo "${BUNDLE_SHA256}  ${WORK}/${BUNDLE}.tar.gz" | sha256sum -c -
-tar -xzf "${WORK}/${BUNDLE}.tar.gz" -C "$WORK"
-IMAGE_DEB="${WORK}/${BUNDLE}/linux-image-${KERNEL}_7.1.0-gd771f25178ba-2_arm64.deb"
-DTB="${WORK}/${BUNDLE}/sm8150-xiaomi-raphael.dtb"
-[[ -s "$IMAGE_DEB" && -s "$DTB" ]]
-[[ "$(dpkg-deb -f "$IMAGE_DEB" Architecture)" == arm64 ]]
+curl -fL --retry 3 --output "${WORK}/${DEB}" "${INPUT_BASE}/${DEB}"
+curl -fL --retry 3 --output "${WORK}/sm8150-xiaomi-raphael.dtb" \
+    "${INPUT_BASE}/sm8150-xiaomi-raphael.dtb"
+echo "${DEB_SHA256}  ${WORK}/${DEB}" | sha256sum -c -
+echo "${DTB_SHA256}  ${WORK}/sm8150-xiaomi-raphael.dtb" | sha256sum -c -
+[[ "$(dpkg-deb -f "${WORK}/${DEB}" Architecture)" == arm64 ]]
 
 curl -fL --retry 3 --output "${WORK}/firmware-xiaomi-raphael.deb" "$FIRMWARE_URL"
 mkdir -p "${WORK}/firmware-root"
@@ -51,8 +49,22 @@ install -m 0755 /workspace/scripts/raphael-initramfs-hook \
     /etc/initramfs-tools/hooks/raphael
 printf '\nMODULES=most\nCOMPRESS=gzip\n' >> /etc/initramfs-tools/initramfs.conf
 
-dpkg -i "$IMAGE_DEB"
+dpkg -i "${WORK}/${DEB}"
 depmod "$KERNEL"
+MODDIR="/usr/lib/modules/${KERNEL}"
+[[ -s "${MODDIR}/modules.dep" && -d "${MODDIR}/kernel" ]]
+tar -C "$MODDIR" -czf "${WORK}/raphael-modules.tar.gz" .
+MODULE_ARCHIVE_SHA256="$(sha256sum "${WORK}/raphael-modules.tar.gz" | cut -d' ' -f1)"
+
+install -m 0755 /workspace/scripts/module-payload-hook \
+    /etc/initramfs-tools/hooks/raphael-module-payload
+mkdir -p /etc/initramfs-tools/scripts/local-bottom
+sed -e "s/@KERNEL@/${KERNEL}/g" \
+    -e "s/@ARCHIVE_SHA@/${MODULE_ARCHIVE_SHA256}/g" \
+    /workspace/scripts/module-sync-local-bottom.in \
+    > /etc/initramfs-tools/scripts/local-bottom/raphael-module-sync
+chmod 0755 /etc/initramfs-tools/scripts/local-bottom/raphael-module-sync
+
 if [[ -s "/boot/initrd.img-${KERNEL}" ]]; then
     update-initramfs -u -k "$KERNEL"
 else
@@ -67,44 +79,25 @@ file "$EFI"
 gzip -t "$INITRD"
 lsinitramfs "$INITRD" > "${WORK}/initramfs-contents.txt"
 grep -Fxq init "${WORK}/initramfs-contents.txt"
+grep -Fxq raphael-modules.tar.gz "${WORK}/initramfs-contents.txt"
+grep -Fxq scripts/local-bottom/raphael-module-sync "${WORK}/initramfs-contents.txt"
 grep -Fq "${KERNEL}/" "${WORK}/initramfs-contents.txt"
+mkdir -p "${WORK}/verify-initramfs"
+unmkinitramfs "$INITRD" "${WORK}/verify-initramfs"
+cmp "${WORK}/raphael-modules.tar.gz" \
+    "${WORK}/verify-initramfs/raphael-modules.tar.gz"
+
+# Exercise the exact first-boot script against a disposable root in this CI
+# container. Its /root is not the user's device.
+cp "${WORK}/raphael-modules.tar.gz" /raphael-modules.tar.gz
+mkdir -p /root/usr/lib/modules
+rootmnt=/root /etc/initramfs-tools/scripts/local-bottom/raphael-module-sync
+[[ -s "/root/usr/lib/modules/${KERNEL}/modules.dep" ]]
+rootmnt=/root /etc/initramfs-tools/scripts/local-bottom/raphael-module-sync
 
 cp "$EFI" "${OUT}/linux.efi"
 cp "$INITRD" "${OUT}/initramfs"
-cp "$DTB" "${OUT}/sm8150-xiaomi-raphael.dtb"
-curl -fL --retry 3 --output "$IMAGE" "$BOOT_URL"
-[[ "$(stat -c %s "$IMAGE")" == 268435456 ]]
-
-cat > "${WORK}/ubuntu.conf" <<EOF
-title Raphael Debian 13 (${KERNEL})
-sort-key raphael
-linux /linux.efi
-initrd /initramfs
-devicetree /dtbs/qcom/sm8150-xiaomi-raphael.dtb
-options console=tty0 loglevel=3 root=PARTLABEL=userdata rootfstype=ext4 rootwait rw
-EOF
-mcopy -o -i "$IMAGE" "${OUT}/linux.efi" ::/linux.efi
-mcopy -o -i "$IMAGE" "${OUT}/initramfs" ::/initramfs
-mcopy -o -i "$IMAGE" "${OUT}/sm8150-xiaomi-raphael.dtb" ::/dtbs/qcom/sm8150-xiaomi-raphael.dtb
-mcopy -o -i "$IMAGE" "${WORK}/ubuntu.conf" ::/loader/entries/ubuntu.conf
-
-fsck.vfat -n "$IMAGE"
-mkdir -p "${WORK}/verify"
-mcopy -i "$IMAGE" ::/linux.efi "${WORK}/verify/linux.efi"
-mcopy -i "$IMAGE" ::/initramfs "${WORK}/verify/initramfs"
-mcopy -i "$IMAGE" ::/dtbs/qcom/sm8150-xiaomi-raphael.dtb \
-    "${WORK}/verify/sm8150-xiaomi-raphael.dtb"
-cmp "${OUT}/linux.efi" "${WORK}/verify/linux.efi"
-cmp "${OUT}/initramfs" "${WORK}/verify/initramfs"
-cmp "${OUT}/sm8150-xiaomi-raphael.dtb" \
-    "${WORK}/verify/sm8150-xiaomi-raphael.dtb"
-
-# The public FAT template contains nonzero data in unused clusters. Fill the
-# free space with zeros, then remove the temporary file to keep the FAT layout.
-truncate -s 200M "${WORK}/zero.fill"
-mcopy -i "$IMAGE" "${WORK}/zero.fill" ::/ZERO.FILL
-mdel -i "$IMAGE" ::/ZERO.FILL
-fsck.vfat -n "$IMAGE"
-
-(cd "$OUT" && sha256sum "$(basename "$IMAGE")" > "$(basename "$IMAGE").sha256")
+cp "${WORK}/sm8150-xiaomi-raphael.dtb" "${OUT}/sm8150-xiaomi-raphael.dtb"
+cp "${WORK}/${DEB}" "${OUT}/${DEB}"
+(cd "$OUT" && sha256sum linux.efi initramfs sm8150-xiaomi-raphael.dtb "$DEB" > SHA256SUMS)
 ls -lh "$OUT"

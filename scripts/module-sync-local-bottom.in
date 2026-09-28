@@ -1,0 +1,44 @@
+#!/bin/sh
+PREREQS=""
+case "$1" in
+    prereqs) echo "$PREREQS"; exit 0 ;;
+esac
+
+kernel='@KERNEL@'
+archive=/raphael-modules.tar.gz
+expected='@ARCHIVE_SHA@'
+root=${rootmnt:-}
+if [ "$root" != /root ] || [ ! -s "$archive" ]; then
+    echo 'Raphael module sync: root mount or archive unavailable' >&2
+    exit 1
+fi
+
+modules="$root/usr/lib/modules"
+target="$modules/$kernel"
+staging="$modules/.$kernel.cache-stage"
+if [ -s "$target/modules.dep" ]; then
+    echo "Raphael module sync: $kernel already installed"
+    exit 0
+fi
+if [ -e "$target" ]; then
+    echo "Raphael module sync: incomplete $target exists; preserving it" >&2
+    exit 1
+fi
+if ! printf '%s  %s\n' "$expected" "$archive" | /usr/bin/busybox sha256sum -c -; then
+    echo 'Raphael module sync: archive checksum mismatch' >&2
+    exit 1
+fi
+
+/usr/bin/busybox mkdir -p "$staging" || exit 1
+if ! /usr/bin/busybox tar -xzf "$archive" -C "$staging"; then
+    echo 'Raphael module sync: extraction failed' >&2
+    exit 1
+fi
+if [ ! -s "$staging/modules.dep" ] || [ ! -d "$staging/kernel" ]; then
+    echo 'Raphael module sync: extracted module tree is incomplete' >&2
+    exit 1
+fi
+/usr/bin/busybox mv "$staging" "$target" || exit 1
+: > "$target/.raphael-cache-modules-ready"
+/usr/bin/busybox sync
+echo "Raphael module sync: installed $kernel into root filesystem"
