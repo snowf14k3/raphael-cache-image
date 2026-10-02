@@ -11,7 +11,8 @@ for pattern in \
     '/lib/firmware/qcom/sm8150/Xiaomi/raphael/a6*' \
     '/lib/firmware/qcom/sm8150/Xiaomi/raphael/ad*' \
     '/lib/firmware/qcom/sm8150/Xiaomi/raphael/cd*' \
-    '/lib/firmware/qcom/sm8150/Xiaomi/raphael/ipa*'; do
+    '/lib/firmware/qcom/sm8150/Xiaomi/raphael/ipa*' \
+    '/lib/firmware/qcom/sm8150/Xiaomi/raphael/venus*'; do
     for fw in $pattern; do
         [ -e "$fw" ] && copy_file firmware "$fw"
     done

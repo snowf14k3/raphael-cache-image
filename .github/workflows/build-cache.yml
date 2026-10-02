@@ -1,35 +1,72 @@
-name: Build Debian 13 Raphael boot components
+name: Build Debian 13 Raphael cache IMG
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      kernel_tag:
+        description: Kernel release tag from snowf14k3/raphael-kernel-build
+        type: string
+        default: test-raphael-7.1-7.1.0-sm8150-g04e1c779f901
+        required: true
+      dtb_mode:
+        description: Use the matching kernel DTB or preserve the template DTB
+        type: choice
+        options:
+          - kernel
+          - preserve-base
+        default: kernel
 
 permissions:
   contents: read
+
+concurrency:
+  group: raphael-cache-image
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
+    env:
+      KERNEL_TAG: ${{ inputs.kernel_tag || 'test-raphael-7.1-7.1.0-sm8150-g04e1c779f901' }}
+      DTB_MODE: ${{ inputs.dtb_mode || 'kernel' }}
+      BUILD_COMMIT: ${{ github.sha }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Build inside Debian 13 ARM64
+      - name: Build and verify IMG inside Debian 13 ARM64
         run: |
           docker run --rm --platform linux/arm64 \
             --volume "$GITHUB_WORKSPACE:/workspace" \
             --workdir /workspace \
+            --env KERNEL_TAG --env DTB_MODE --env BUILD_COMMIT --env GITHUB_TOKEN \
             debian:trixie \
             bash scripts/build-cache.sh
-      - name: Upload EFI, initramfs and matching kernel package
+      - name: Record image name and install command
+        id: image
+        run: |
+          kernel="$(cat out/kernel-release.txt)"
+          [[ "$kernel" =~ ^[0-9]+\.[0-9]+\.[0-9]+-sm8150[-+A-Za-z0-9._]*$ ]]
+          echo "kernel=$kernel" >> "$GITHUB_OUTPUT"
+          {
+            echo "Built and verified the final 256 MiB cache IMG."
+            echo ""
+            echo '```text'
+            echo "fastboot flash cache xiaomi-k20pro-boot-$kernel.img"
+            echo '```'
+            echo ""
+            cat out/build-info.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload ready-to-flash IMG
         uses: actions/upload-artifact@v4
         with:
-          name: raphael-bootfix-c0d0-debian13
+          name: raphael-cache-debian13-${{ steps.image.outputs.kernel }}
           path: |
-            out/linux.efi
-            out/initramfs
-            out/sm8150-xiaomi-raphael.dtb
-            out/linux-image-*.deb
-            out/SHA256SUMS
+            out/xiaomi-k20pro-boot-*.img
+            out/xiaomi-k20pro-boot-*.img.sha256
+            out/build-info.txt
           if-no-files-found: error
+          compression-level: 6
           retention-days: 14
